@@ -1,0 +1,187 @@
+---
+title: "Case Study 1"
+author: "Drew Nunnally"
+date: "03-08-2025"
+output: 
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r packages}
+library(caret)
+library(class)
+library(corrplot)
+library(dplyr)
+library(e1071)
+library(ggplot2)
+library(janitor)
+library(pointblank)
+library(readr)
+library(skimr)
+library(tidyverse)
+
+options(scipen = 999)
+```
+
+```{r import data}
+data <- read_csv("CaseStudy1-data.csv", show_col_types = FALSE)
+```
+
+```{r data cleaning}
+# Remove Columns with Only 1 value
+static_columns <- data %>%
+  summarise(across(everything(), n_distinct)) %>%
+  pivot_longer(everything(), names_to = "column", values_to = "count") %>%
+  filter(count == 1) %>%
+  pull(column)
+
+# Locate Character Columns to convert to Numerical Factors
+char_columns <- data %>%
+  select(where(is.character)) %>%
+  colnames()
+char_columns <- char_columns[char_columns != "Attrition"]
+
+# Set Character Columns as Factors
+data$fct_BusinessTravel <- as.numeric(as.factor(data$BusinessTravel))
+data$fct_Department <- as.numeric(as.factor(data$Department))
+data$fct_EducationField <- as.numeric(as.factor(data$EducationField))
+data$fct_Gender <- as.numeric(as.factor(data$Gender))
+data$fct_JobRole <- as.numeric(as.factor(data$JobRole))
+data$fct_MaritalStatus <- as.numeric(as.factor(data$MaritalStatus))
+data$fct_OverTime <- as.numeric(as.factor(data$OverTime))
+
+data <- data %>% select(-all_of(c(static_columns, char_columns)))
+data <- data %>% mutate(Attrition = ifelse(Attrition == "Yes", 1, 0)) 
+
+# Correlation subset
+corr <- cor(data, use = "all.obs")
+corr <- as.data.frame(corr) %>% mutate_if(is.numeric, round, 2)
+corr <- corr %>% filter(Attrition >= 0.05 | Attrition <= -0.05)
+
+# Predict Columns
+cols <- row.names(corr)
+cols <- cols[cols != "Attrition"] 
+
+# Factor Attrition Column
+data$Attrition <- factor(data$Attrition, levels = c(0, 1), labels = c("Did Not Quit", "Quit"))
+data$Attrition <- relevel(data$Attrition, ref = "Quit")
+
+# Reorder 
+data <- data %>% select(Attrition, everything())
+
+### Scale Data ###
+numeric_cols <- names(data)[sapply(data, is.numeric)]
+numeric_cols <- numeric_cols[numeric_cols != c("ID", "MonthlyIncome")]
+data[numeric_cols] <- scale(data[numeric_cols])
+```
+
+
+```{r train model}
+#################################### KNN ################################################
+# Variables
+set.seed(0)
+splitPerc <- 0.7
+trainIndices <- sample(1:nrow(data), round(splitPerc * nrow(data)))
+train <- data[trainIndices, ]
+test  <- data[-trainIndices, ]
+numks <- 3
+threshold <- .3
+
+# Train Model
+knn_preds <- knn(train[, cols], test[, cols], train$Attrition, prob = TRUE, k = numks)
+confusionMatrix(table(knn_preds, test$Attrition), mode = "everything")$table
+
+probs <- ifelse(knn_preds == "Quit", attributes(knn_preds)$prob, 1 - attributes(knn_preds)$prob)
+final_predictions <- ifelse(probs > threshold, "Quit", "Did Not Quit")
+final_predictions <- factor(final_predictions, levels = levels(test$Attrition))
+confusionMatrix(table(final_predictions, test$Attrition), mode = "everything")
+confusionMatrix(table(final_predictions, test$Attrition), mode = "everything")$table
+
+#################################### NB ################################################
+set.seed(0)
+splitPerc <- 0.7
+trainIndices <- sample(1:nrow(data), round(splitPerc * nrow(data)))
+train <- data[trainIndices, ]
+test  <- data[-trainIndices, ]
+threshold <- 0.2
+
+NB_model <- naiveBayes(train[, cols], train$Attrition)
+NB_preds <- predict(NB_model, test[, cols])
+confusionMatrix(table(NB_preds, test$Attrition), mode = "everything")$table
+
+NB_probs <- predict(NB_model, test[, cols], type = "raw")
+probs <- NB_probs[,"Quit"]
+
+final_predictions <- ifelse(probs > threshold, "Quit", "Did Not Quit")
+final_predictions <- factor(final_predictions, levels = levels(test$Attrition))
+confusionMatrix(table(final_predictions, test$Attrition), mode = "everything")
+confusionMatrix(table(final_predictions, test$Attrition), mode = "everything")$table
+
+```
+
+#################### No Attrition Test #########################
+################################################################
+
+```{r data}
+# Load no attrition data
+data_2 <- read.csv(file.choose(),header = TRUE)
+```
+
+```{r data cleaning}
+# Remove Columns with Only 1 value
+static_columns <- data_2 %>%
+  summarise(across(everything(), n_distinct)) %>%
+  pivot_longer(everything(), names_to = "column", values_to = "count") %>%
+  filter(count == 1) %>%
+  pull(column)
+
+# Locate Character Columns to convert to Numerical Factors
+char_columns <- data_2 %>%
+  select(where(is.character)) %>%
+  colnames()
+
+# Set Character Columns as Factors
+data_2$fct_BusinessTravel <- as.numeric(as.factor(data_2$BusinessTravel))
+data_2$fct_Department <- as.numeric(as.factor(data_2$Department))
+data_2$fct_EducationField <- as.numeric(as.factor(data_2$EducationField))
+data_2$fct_Gender <- as.numeric(as.factor(data_2$Gender))
+data_2$fct_JobRole <- as.numeric(as.factor(data_2$JobRole))
+data_2$fct_MaritalStatus <- as.numeric(as.factor(data_2$MaritalStatus))
+data_2$fct_OverTime <- as.numeric(as.factor(data_2$OverTime))
+
+data_2 <- data_2 %>% select(-all_of(c(static_columns, char_columns)))
+
+### Scale Data ###
+numeric_cols <- names(data_2)[sapply(data_2, is.numeric)]
+numeric_cols <- numeric_cols[numeric_cols != c("ID", "MonthlyIncome")]
+data_2[numeric_cols] <- scale(data_2[numeric_cols])
+```
+
+```{r model}
+#### KNN ####
+# Test On No Attrition Dataset
+knn_preds <- knn(train[, cols], data_2[, cols], train$Attrition, prob = TRUE, k = numks)
+probs <- ifelse(knn_preds == "Quit", attributes(knn_preds)$prob, 1 - attributes(knn_preds)$prob)
+
+final_predictions_knn <- ifelse(probs > threshold, "Quit", "Did Not Quit")
+final_predictions_knn <- factor(final_predictions_knn, levels = c("Quit", "Did Not Quit"))
+final_predictions_knn
+
+output_knn <- data.frame(ID = data_2$ID, Prediction = final_predictions_knn)
+write.csv(output_knn, "Drew_Nunnally_KNN_Competition.csv")
+
+#### NB ####
+NB_preds <- predict(NB_model, data_2[, cols])
+NB_probs <- predict(NB_model, data_2[, cols], type = "raw")
+probs <- NB_probs[,"Quit"]
+
+final_predictions_nb<- ifelse(probs > threshold, "Quit", "Did Not Quit")
+final_predictions_nb <- factor(final_predictions_nb, levels = c("Quit", "Did Not Quit"))
+final_predictions_nb
+
+output_nb <- data.frame(ID = data_2$ID, Prediction = final_predictions_nb)
+write.csv(output_nb, "Drew_Nunnally_NB_Competition.csv")
+
+```
