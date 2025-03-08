@@ -1,0 +1,533 @@
+---
+title: "Case Study 1"
+author: "Drew Nunnally"
+date: "02-28-2025"
+output: 
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r packages}
+library(caret)
+library(class)
+library(corrplot)
+library(dplyr)
+library(e1071)
+library(ggplot2)
+library(janitor)
+library(pointblank)
+library(readr)
+library(skimr)
+library(tidyverse)
+
+options(scipen = 999)
+```
+
+```{r import data}
+data <- read_csv("CaseStudy1-data.csv", show_col_types = FALSE)
+```
+
+```{r initial eda}
+# Initial Data
+data_overview <- skim(data)
+
+# Attrition Count
+data %>% ggplot(aes(x = Attrition)) +
+  geom_bar(fill = "steelblue") +
+  labs(title = "Attrition Distribution", x = "Attrition", y = "Count") + 
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Age by Attrition
+median_data <- data %>%
+  group_by(Attrition) %>%
+  summarize(median_age = median(Age, na.rm = TRUE))
+
+data %>% 
+  ggplot(aes(x = Age, fill = Attrition)) +
+  geom_density(alpha = 0.7) +
+  facet_wrap(~Attrition) +
+  geom_vline(data = median_data, aes(xintercept = median_age),
+             linetype = "dashed", color = "black") +
+  geom_text(data = median_data, 
+            aes(x = median_age, y = 0, label = paste0("Median Age: ", round(median_age, 1))),
+            nudge_x = 2, vjust = -1, hjust = 0, color = "black") +
+  labs(title = "Age Distribution by Attrition", x = "Age", y = "Density")
+
+# Income by Attrition with Median Income Labels
+medians <- data %>%
+  group_by(Attrition) %>%
+  summarize(median_income = median(MonthlyIncome, na.rm = TRUE))
+
+data %>% 
+  ggplot(aes(x = Attrition, y = MonthlyIncome, fill = Attrition)) +
+  geom_boxplot() +
+  stat_summary(fun = median, geom = "text", aes(label = scales::dollar(after_stat(y), accuracy = 1)),
+               vjust = -1, color = "black", size = 5) + 
+  labs(title = "Monthly Income by Attrition", x = "Attrition", y = "Monthly Income", subtitle = "With Median Value Shown") +
+  theme_minimal()
+```
+
+```{r data cleaning}
+#### Data Cleaning for Correlation ####
+# Find Character Columns with only one unique value
+static_columns <- data %>%
+  summarise(across(everything(), n_distinct)) %>%
+  pivot_longer(everything(), names_to = "column", values_to = "count") %>%
+  filter(count == 1) %>%
+  pull(column)
+
+# Locate Character Columns to convert to Numerical Factors for Correlation Matrix
+char_columns <- data %>%
+  select(where(is.character)) %>%
+  colnames()
+char_columns <- char_columns[char_columns != "Attrition"]
+
+# Set Character Columns as Factors
+data$fct_BusinessTravel <- as.numeric(as.factor(data$BusinessTravel))
+data$fct_Department <- as.numeric(as.factor(data$Department))
+data$fct_EducationField <- as.numeric(as.factor(data$EducationField))
+data$fct_Gender <- as.numeric(as.factor(data$Gender))
+data$fct_JobRole <- as.numeric(as.factor(data$JobRole))
+data$fct_MaritalStatus <- as.numeric(as.factor(data$MaritalStatus))
+data$fct_OverTime <- as.numeric(as.factor(data$OverTime))
+```
+
+```{r correlation analysis}
+#### Correlation #### 
+# Remove Original Character Columns and Static Columns
+data_clean <- data %>% select(-all_of(c(static_columns, char_columns)))
+data_clean <- data_clean %>% mutate(Attrition = ifelse(Attrition == "Yes", 1, 0)) 
+
+# Create Correlation Matrix
+corr <- cor(data_clean, use = "all.obs")
+
+# Plot Initial Correlation
+corr %>% corrplot(method = "color", order = "alphabet", addCoef.col = "black", 
+                  tl.col = "black", number.cex = 0.7, tl.srt = 45)
+
+# Greater than .05 or -.05 correlation
+corr_2 <- as.data.frame(corr) %>% mutate_if(is.numeric, round, 2)
+corr_2 <- corr_2 %>% filter(Attrition >= 0.05 | Attrition <= -0.05)
+
+# Predict Columns to use below
+pred_cols <- row.names(corr_2)
+
+# Clean Column Names for Correlation Plots
+colnames(corr_2) <- gsub("^fct_", "", colnames(corr_2))
+rownames(corr_2) <- gsub("^fct_", "", rownames(corr_2))
+
+# Top Linear Predictors (Finding the top three correlated values)
+corr_3 <- corr_2 %>% filter(Attrition >= 0.19 | Attrition <= -0.19)
+
+
+# Plot Clean Correlation
+corr_2 <- as.matrix(corr_2)
+corr_2 %>% corrplot(method = "color", order = "alphabet", addCoef.col = "black", 
+                    tl.col = "black", number.cex = 0.7, tl.srt = 45)
+
+# Plot Top Clean Correlation
+corr_3 <- as.matrix(corr_3)
+corr_3 %>% corrplot(method = "color", order = "alphabet", addCoef.col = "black", 
+                    tl.col = "black", number.cex = 0.7, tl.srt = 45)
+```
+
+```{r correlation plots}
+#### Plots after Correlation Analysis ####  
+### Overtime by Attrition ###
+data_percent <- data %>%
+  count(OverTime, Attrition) %>%
+  group_by(OverTime) %>%
+  mutate(percentage = n / sum(n) * 100)
+
+data_percent %>%
+  filter(Attrition == "Yes") %>% 
+  ggplot(aes(x = OverTime, y = percentage, fill = Attrition)) +
+  geom_bar(stat = "identity", position = "dodge", fill = "steelblue") +
+  geom_text(aes(label = paste0(round(percentage, 1), "%")), 
+            position = position_dodge(width = 0.9), vjust = -0.5, size = 5) + 
+  labs(title = "Overtime Distribution by Attrition", x = "Overtime", y = "Percentage") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "none")
+
+### Job Involvement by Attrition ###
+data_percent <- data %>%
+  count(JobInvolvement, Attrition) %>%
+  group_by(JobInvolvement) %>%
+  mutate(percentage = n / sum(n) * 100)
+
+data_percent %>%
+  filter(Attrition == "Yes") %>% 
+  ggplot(aes(x = JobInvolvement, y = percentage, fill = Attrition)) +
+  geom_bar(stat = "identity", position = "dodge", fill = "steelblue") +
+  geom_text(aes(label = paste0(round(percentage, 1), "%")), 
+            position = position_dodge(width = 0.9), vjust = -0.5, size = 5) + 
+  labs(title = "Job Involvement by Attrition", x = "Job Involvement", y = "Percentage") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "none")
+
+### Marital Status by Attrition ###
+data_percent <- data %>%
+  count(MaritalStatus, Attrition) %>%
+  group_by(MaritalStatus) %>%
+  mutate(percentage = n / sum(n) * 100)
+
+data_percent %>%
+  filter(Attrition == "Yes") %>% 
+  ggplot(aes(x = MaritalStatus, y = percentage, fill = Attrition)) +
+  geom_bar(stat = "identity", position = "dodge", fill = "steelblue") +
+  geom_text(aes(label = paste0(round(percentage, 1), "%")), 
+            position = position_dodge(width = 0.9), vjust = -0.5, size = 5) +
+  labs(title = "Marital Status Distribution by Attrition", x = "Marital Status", y = "Percentage") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "none")
+
+### Department by Attrition ### (Extra Plot)
+data_percent <- data %>%
+  count(Department, Attrition) %>%
+  group_by(Department) %>%
+  mutate(percentage = n / sum(n) * 100)
+
+data_percent %>%
+  filter(Attrition == "Yes") %>% 
+  ggplot(aes(x = Department, y = percentage, fill = Attrition)) +
+  geom_bar(stat = "identity", position = "dodge", fill = "steelblue") +
+  geom_text(aes(label = paste0(round(percentage, 1), "%")), 
+            position = position_dodge(width = 0.9), vjust = -0.5, size = 5) +
+  labs(title = "Department Distribution by Attrition", x = "Department", y = "Percentage") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "none")
+```
+
+```{r models}
+#### Model Column Prep ###
+# Take Cols from above correlation plot 2 >= .05 or <= -.05 These will be predictors
+cols <- pred_cols
+cols <- cols[cols != "Attrition"] 
+
+# Factor Attrition Column
+data_clean$Attrition <- factor(data_clean$Attrition, levels = c(0, 1), labels = c("Did Not Quit", "Quit"))
+data_clean$Attrition <- relevel(data_clean$Attrition, ref = "Quit")
+
+# Reorder 
+data_clean <- data_clean %>% select(Attrition, everything())
+
+### Scale Data ###
+numeric_cols <- names(data_clean)[sapply(data_clean, is.numeric)]
+# Exclude ID and Monthly Income
+numeric_cols <- numeric_cols[numeric_cols != c("ID", "MonthlyIncome")]
+data_clean[numeric_cols] <- scale(data_clean[numeric_cols])
+
+#### Models ####
+#### KNN Seed & NumK Loop ####
+iterations <- 100
+numks <- 30
+splitPerc <- 0.7
+threshold <- 0.3
+
+# Accuracy Storage
+masterKNN <- data.frame(
+  Seed = integer(),
+  NumK = integer(),
+  Accuracy = numeric(),
+  Balanced_Accuracy = numeric(),
+  Sensitivity = numeric(),
+  Specificity = numeric()
+)
+
+for (i in 1:iterations) {
+  set.seed(i)
+  trainIndices <- sample(1:nrow(data_clean), round(splitPerc * nrow(data_clean)))
+  train <- data_clean[trainIndices, ]
+  test <- data_clean[-trainIndices, ]
+  
+  for (j in 1:numks) {
+    
+    # Original
+    original_classifications <- knn(train[, cols], test[, cols], train$Attrition, prob = TRUE, k = j)
+    original_cm_knn <- confusionMatrix(table(original_classifications, test$Attrition), mode = "everything")
+    original_cm_knn$table
+    
+    probs <- ifelse(original_classifications == "Quit", attributes(original_classifications)$prob, 1 - attributes(original_classifications)$prob)
+    original_classifications
+    probs
+    
+    # Adjusted
+    new_classifications <- ifelse(probs > threshold, "Quit", "Did Not Quit")
+    new_classifications <- factor(new_classifications, levels = levels(test$Attrition))
+    
+    CM_KNN <- confusionMatrix(table(new_classifications, test$Attrition), mode = "everything")
+    CM_KNN$table
+
+    masterKNN <- rbind(masterKNN, data.frame(
+      Seed = i,
+      NumK = j,
+      Accuracy = CM_KNN$overall["Accuracy"],
+      Balanced_Accuracy = CM_KNN$byClass["Balanced Accuracy"],
+      Sensitivity = CM_KNN$byClass["Sensitivity"],
+      Specificity = CM_KNN$byClass["Specificity"]
+    ))
+    rownames(masterKNN) <- NULL
+    print(i) 
+  }
+}
+
+# Avg of All
+final_results_knn <- masterKNN %>%
+  group_by(NumK) %>%
+  summarize(
+    Mean_Accuracy = mean(Accuracy, na.rm = TRUE),
+    Mean_Balanced_Accuracy = mean(Balanced_Accuracy, na.rm = TRUE),
+    Mean_Sensitivity = mean(Sensitivity, na.rm = TRUE),
+    Mean_Specificity = mean(Specificity, na.rm = TRUE)
+  )
+
+#### NB Seed Loop ####
+iterations <- 100
+splitPerc <- 0.7
+thresholds <- c(0.1, 0.2, 0.3, 0.4)
+
+# Accuracy Storage
+masterNB <- data.frame(
+  Seed = integer(),
+  Accuracy = numeric(),
+  Balanced_Accuracy = numeric(),
+  Sensitivity = numeric(),
+  Specificity = numeric()
+)
+
+# Loop
+for (thr in thresholds) {
+  for (i in 1:iterations) {
+    set.seed(i)
+    trainIndices <- sample(1:nrow(data_clean), round(splitPerc * nrow(data_clean)))
+    train <- data_clean[trainIndices, ]
+    test <- data_clean[-trainIndices, ]
+    
+    NB_model <- naiveBayes(train[, cols], train$Attrition)
+    probs_nb <- predict(NB_model, test[, cols], type = "raw")
+    
+    probs <- probs_nb[,"Quit"]
+    
+    # Original
+    original_predictions <- predict(NB_model, test[, cols])
+    original_cm_nb <- confusionMatrix(original_predictions, test$Attrition)
+    original_cm_nb$table
+    
+    # New
+    new_predictions <- ifelse(probs > thr, "Quit", "Did Not Quit")
+    new_predictions <- factor(new_predictions, levels = levels(test$Attrition))
+    
+    CM_NB <- confusionMatrix(table(new_predictions, test$Attrition), mode = "everything")
+    CM_NB$table
+    
+    masterNB <- rbind(masterNB, data.frame(
+      Seed = i,
+      Threshold = thr,
+      Accuracy = CM_NB$overall["Accuracy"],
+      Balanced_Accuracy = CM_NB$byClass["Balanced Accuracy"],
+      Sensitivity = CM_NB$byClass["Sensitivity"],
+      Specificity = CM_NB$byClass["Specificity"]
+    ))
+    rownames(masterNB) <- NULL
+    print(paste("Iteration:", i, "Threshold:", thr))
+  }
+}
+
+final_results_nb <- masterNB %>%
+  group_by(Threshold) %>%
+  summarize(
+    Mean_Accuracy = mean(Accuracy, na.rm = TRUE),
+    Mean_Balanced_Accuracy = mean(Balanced_Accuracy, na.rm = TRUE),
+    Mean_Sensitivity = mean(Sensitivity, na.rm = TRUE),
+    Mean_Specificity = mean(Specificity, na.rm = TRUE)
+  )
+
+
+```
+
+```{r cost analysis}
+# Cost Variables
+did_not_quit_cost <- 200 # Dollar
+quit_cost_low <- 0.50 # Percent
+quit_cost_high <- 4.00 # Percent
+
+#################################### KNN ################################################
+set.seed(0)
+splitPerc <- 0.7
+trainIndices <- sample(1:nrow(data_clean), round(splitPerc * nrow(data_clean)))
+train <- data_clean[trainIndices, ]
+test  <- data_clean[-trainIndices, ]
+
+# Best Variables
+numks <- 3
+threshold <- .3
+
+##### Testing Best Case From Above #####
+knn_preds <- knn(train[, cols], test[, cols], train$Attrition, prob = TRUE, k = numks)
+confusionMatrix(table(knn_preds, test$Attrition), mode = "everything")$table
+
+probs <- ifelse(knn_preds == "Quit", attributes(knn_preds)$prob, 1 - attributes(knn_preds)$prob)
+
+final_predictions <- ifelse(probs > threshold, "Quit", "Did Not Quit")
+final_predictions <- factor(final_predictions, levels = levels(test$Attrition))
+confusionMatrix(table(final_predictions, test$Attrition), mode = "everything")$table
+########################################
+
+##### Testing On Entire Dataset #####
+final_knn_preds <- knn(train[, cols], data_clean[, cols], train$Attrition, prob = TRUE, k = numks)
+confusionMatrix(table(final_knn_preds, data_clean$Attrition), mode = "everything")
+confusionMatrix(table(final_knn_preds, data_clean$Attrition), mode = "everything")$table
+
+probs <- ifelse(final_knn_preds == "Quit", attributes(final_knn_preds)$prob, 1 - attributes(final_knn_preds)$prob)
+
+final_model_preds <- ifelse(probs > threshold, "Quit", "Did Not Quit")
+final_model_preds <- factor(final_model_preds, levels = levels(data_clean$Attrition))
+confusionMatrix(table(final_model_preds, data_clean$Attrition), mode = "everything")
+confusionMatrix(table(final_model_preds, data_clean$Attrition), mode = "everything")$table
+
+
+##### Results #####
+results <- data.frame(
+  predicted_attrition = final_model_preds,
+  actual_attrition = data_clean$Attrition,
+  MonthlyIncome = data_clean$MonthlyIncome
+)
+
+# Baseline Cost
+Actual_Cost_Low <- data_clean %>% filter(Attrition == "Quit") %>% summarise(actual_cost_low = sum(MonthlyIncome)) %>% pull() * quit_cost_low
+Actual_Cost_High <- data_clean %>% filter(Attrition == "Quit") %>% summarise(actual_cost_low = sum(MonthlyIncome)) %>% pull() * quit_cost_high
+
+# Model False Negative Cost
+FN_KNN_Cost_Low <- results %>% 
+  filter(predicted_attrition == "Did Not Quit" & actual_attrition == "Quit") %>% 
+  summarise(total = sum(MonthlyIncome)) %>% 
+  pull() * quit_cost_low
+
+FN_KNN_Cost_High <- results %>% 
+  filter(predicted_attrition == "Did Not Quit" & actual_attrition == "Quit") %>% 
+  summarise(total = sum(MonthlyIncome)) %>% 
+  pull() * quit_cost_high
+
+# Model True Positive and False Positive Cost
+TP_KNN_FP_Cost <- results %>% 
+  filter(predicted_attrition == "Quit") %>% 
+  nrow() * did_not_quit_cost
+
+# KNN Total
+KNN_Cost_Low <- FN_KNN_Cost_Low + TP_KNN_FP_Cost
+KNN_Cost_High <- FN_KNN_Cost_High + TP_KNN_FP_Cost
+
+Actual_Cost_Low
+KNN_Cost_Low
+Actual_Cost_High
+KNN_Cost_High
+
+KNN_Low_Savings <- Actual_Cost_Low - KNN_Cost_Low
+KNN_High_Savings <- Actual_Cost_High - KNN_Cost_High
+
+#################################### NB #################################################
+set.seed(0)
+splitPerc <- 0.7
+trainIndices <- sample(1:nrow(data_clean), round(splitPerc * nrow(data_clean)))
+train <- data_clean[trainIndices, ]
+test  <- data_clean[-trainIndices, ]
+
+# Best Variables
+threshold <- 0.2
+
+##### Testing Best Case From Above #####
+NB_model <- naiveBayes(train[, cols], train$Attrition)
+NB_class_preds <- predict(NB_model, test[, cols])
+confusionMatrix(table(NB_class_preds, test$Attrition), mode = "everything")$table
+
+NB_probs <- predict(NB_model, test[, cols], type = "raw")
+probs <- NB_probs[,"Quit"]
+
+final_predictions <- ifelse(probs > threshold, "Quit", "Did Not Quit")
+final_predictions <- factor(final_predictions, levels = levels(test$Attrition))
+confusionMatrix(table(final_predictions, test$Attrition), mode = "everything")$table
+########################################
+
+##### Testing On Entire Dataset #####
+final_nb_probs <- predict(NB_model, data_clean[, cols], type = "raw")
+NB_class_preds_all <- predict(NB_model, data_clean[, cols])
+confusionMatrix(table(NB_class_preds_all, data_clean$Attrition), mode = "everything")
+confusionMatrix(table(NB_class_preds_all, data_clean$Attrition), mode = "everything")$table
+
+probs <- final_nb_probs[,"Quit"]
+final_model_preds <- ifelse(probs > threshold, "Quit", "Did Not Quit")
+final_model_preds <- factor(final_model_preds, levels = levels(data_clean$Attrition))
+confusionMatrix(table(final_model_preds, data_clean$Attrition), mode = "everything")
+confusionMatrix(table(final_model_preds, data_clean$Attrition), mode = "everything")$table
+
+
+##### Results #####
+results <- data.frame(
+  predicted_attrition = final_model_preds,
+  actual_attrition = data_clean$Attrition,
+  MonthlyIncome = data_clean$MonthlyIncome
+)
+
+# Baseline Cost
+Actual_Cost_Low <- data_clean %>% 
+  filter(Attrition == "Quit") %>% 
+  summarise(actual_cost_low = sum(MonthlyIncome)) %>% pull() * quit_cost_low
+Actual_Cost_High <- data_clean %>% 
+  filter(Attrition == "Quit") %>% 
+  summarise(actual_cost_low = sum(MonthlyIncome)) %>% pull() * quit_cost_high
+
+# Model False Negative Cost
+FN_NB_Cost_Low <- results %>% 
+  filter(predicted_attrition == "Did Not Quit" & actual_attrition == "Quit") %>% 
+  summarise(total = sum(MonthlyIncome)) %>% pull() * quit_cost_low
+
+FN_NB_Cost_High <- results %>% 
+  filter(predicted_attrition == "Did Not Quit" & actual_attrition == "Quit") %>% 
+  summarise(total = sum(MonthlyIncome)) %>% pull() * quit_cost_high
+
+# Model True Positive and False Positive Cost
+TP_NB_FP_Cost <- results %>% 
+  filter(predicted_attrition == "Quit") %>% 
+  nrow() * did_not_quit_cost
+
+# NB Total
+NB_Cost_Low <- FN_NB_Cost_Low + TP_NB_FP_Cost
+NB_Cost_High <- FN_NB_Cost_High + TP_NB_FP_Cost
+
+Actual_Cost_Low
+NB_Cost_Low
+Actual_Cost_High
+NB_Cost_High
+
+NB_Low_Savings <- Actual_Cost_Low - NB_Cost_Low
+NB_High_Savings <- Actual_Cost_High - NB_Cost_High
+
+########### Comparison Tables ################
+# KNN
+cost_comparison_knn <- data.frame(
+  Description = c("Baseline (Actual)", "KNN", "Savings", "Savings %"),
+  Cost_Low = c(Actual_Cost_Low, KNN_Cost_Low, Actual_Cost_Low - KNN_Cost_Low, (Actual_Cost_Low - KNN_Cost_Low) / Actual_Cost_Low),
+  Cost_High = c(Actual_Cost_High, KNN_Cost_High, Actual_Cost_High - KNN_Cost_High, (Actual_Cost_High - KNN_Cost_High) / Actual_Cost_High)
+)
+
+cost_comparison_knn <- cost_comparison_knn %>% 
+  mutate_if(is.numeric, ~round(., 2))
+
+cost_comparison_knn
+
+# NB
+cost_comparison_nb <- data.frame(
+  Description = c("Baseline (Actual)", "Naive Bayes", "Savings", "Savings %"),
+  Cost_Low = c(Actual_Cost_Low, NB_Cost_Low, Actual_Cost_Low - NB_Cost_Low, (Actual_Cost_Low - NB_Cost_Low) / Actual_Cost_Low),
+  Cost_High = c(Actual_Cost_High, NB_Cost_High, Actual_Cost_High - NB_Cost_High, (Actual_Cost_High - NB_Cost_High) / Actual_Cost_High)
+)
+
+cost_comparison_nb <- cost_comparison_nb %>% 
+  mutate_if(is.numeric, ~round(., 2))
+
+cost_comparison_nb
+
+```
