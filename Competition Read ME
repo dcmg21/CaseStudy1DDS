@@ -1,0 +1,3 @@
+I uploaded two RMD files.  The Competition RMD should allow you to train both models (KNN and NB) and then, at line 124 (No Attrition Test), upload your CSV you gave us with missing attrition, and it will go through the cleaning and prediction for both models. 
+
+I exported both models because (as shown in my PowerPoint and video) my NB model with threshold had a better overall accuracy, which is what I think you want for the competition, but from a cost savings standpoint, my KNN was better because it had a higher sensitivity (though lower accuracy). Either way, it will be interesting to see which does which with your no attrition file.
